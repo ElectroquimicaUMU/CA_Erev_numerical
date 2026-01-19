@@ -91,8 +91,8 @@ def _build_txt_profile(selected_runs: list[dict], t_profile: float, species: str
     return "\n".join(lines) + "\n"
 
 
-st.set_page_config(page_title="Cronoamperometría Numérica", layout="wide")
-st.title("Cronoamperometría: difusión planar semi-infinita y electrodo esférico (sin animaciones)")
+st.set_page_config(page_title="Cronoamperometría", layout="wide")
+st.title("Cronoamperometría")
 
 if "runs" not in st.session_state:
     st.session_state.runs = []
@@ -333,6 +333,7 @@ st.caption(
     "Notas: (i) La condición en la superficie es tipo Nernst. "
     "(ii) Se asumen coeficientes de difusión iguales para las especies oxidada y reducida."
 )
+
 
 
 
