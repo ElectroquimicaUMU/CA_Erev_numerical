@@ -194,7 +194,7 @@ if clear_all:
 # -----------------------------
 if run_and_add and sim_enabled:
     with st.spinner("Resolviendo..."):
-        if geometry.startswith("Macroelectrodo"):
+        if geometry.startswith("Plano"):
             times, j, coord, profiles = solve_diffusion_implicit_planar(
                 D=D,
                 delta_x=delta_x,
@@ -358,6 +358,7 @@ st.caption(
     "Notas: (i) Transferencia monoelectrónica (n=1) reversible. "
     "(ii) Coeficientes de difusión iguales para especies oxidada y reducida."
 )
+
 
 
 
