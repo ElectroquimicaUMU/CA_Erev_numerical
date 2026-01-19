@@ -331,6 +331,6 @@ with col_right:
 
 st.caption(
     "Notas: (i) La condición en la superficie es tipo Nernst. "
-    "(ii) Se asume c_total constante en el espacio y el tiempo, con c_red=c_total−c_ox. "
-    "(iii) Para esfera, la j graficada es local; corriente total: I(t)=4πa²·j(t)."
+    "(ii) Se asumen coeficientes de difusión iguales para las especies oxidada y reducida."
 )
+
