@@ -127,7 +127,6 @@ def solve_diffusion_implicit_planar(
     x = np.arange(n) * delta_x
     return times, j, x, profiles
 
-
 def solve_diffusion_implicit_spherical(
     *,
     D: float,
@@ -140,17 +139,11 @@ def solve_diffusion_implicit_spherical(
     E: float,
     E0: float,
 ):
-    """Difusión esférica (electrodo de radio a) con:
+    """Difusión esférica con:
        - c(a,t) fijada por Nernst (Dirichlet)
        - flujo nulo en r=r_max: dc/dr = 0 (Neumann)
-
-    PDE: ∂c/∂t = D( ∂²c/∂r² + (2/r)∂c/∂r ), r∈[a,r_max]
-    Transformación u=r c => ∂u/∂t = D ∂²u/∂r²
-
-    Neumann en c: dc/dr=0 en r_max  =>  d(u/r)/dr=0  =>  u'(r_max)=u(r_max)/r_max
-    Discretización (1º orden hacia atrás):
-      (U_N - U_{N-1})/dr = U_N / r_max
-      => -U_{N-1} + (1 - dr/r_max) U_N = 0
+    Discretización conservativa:  ∂c/∂t = (D/r^2) ∂/∂r (r^2 ∂c/∂r)
+    Implícito, sistema tridiagonal.
     """
     if D <= 0:
         raise ValueError("D debe ser > 0")
@@ -165,61 +158,78 @@ def solve_diffusion_implicit_spherical(
     if r_max < a + 5 * delta_r:
         raise ValueError("r_max debe ser al menos ~a+5*Δr (mejor bastante mayor)")
 
+    # Mallado radial
     n = int(np.ceil((r_max - a) / delta_r)) + 1
     m = int(np.ceil(max_t / delta_t))
     r = a + np.arange(n) * delta_r
 
-    lam = D * delta_t / (delta_r ** 2)
+    # Caras (i+1/2)
+    r_face = 0.5 * (r[:-1] + r[1:])  # tamaño n-1
 
+    # Condición en electrodo (Dirichlet en r=a)
     c0 = c_surf_nernst(c_bulk, E, E0)
-    u0 = a * c0
 
-    # Estado inicial: c=c_bulk uniforme => u=r*c_bulk
-    U = r * c_bulk
-    U[0] = u0
+    # Estado inicial (puedes mantener c_bulk uniforme)
+    C = np.full(n, c_bulk, dtype=float)
+    C[0] = c0
 
-    # Desconocidas: U[1]..U[n-1] (tamaño n-1)
+    # Desconocidas: C[1]..C[n-1] (tamaño n-1)
     Nunk = n - 1
-    diag = np.empty(Nunk, dtype=float)
-    lower = np.empty(Nunk - 1, dtype=float)
-    upper = np.empty(Nunk - 1, dtype=float)
+    diag = np.zeros(Nunk, dtype=float)
+    lower = np.zeros(Nunk - 1, dtype=float)
+    upper = np.zeros(Nunk - 1, dtype=float)
 
-    # Filas interiores (i=1..n-2)
-    diag[:-1] = 1.0 + 2.0 * lam
-    lower[:-1] = -lam
-    upper[:] = -lam
+    # Construcción de coeficientes implícitos (conservativos)
+    # Para nodo físico i (1..n-2): coeficientes basados en r_{i±1/2}^2 / r_i^2
+    # Map: incógnita k corresponde a i=k+1
+    for k in range(Nunk - 1):  # k=0..n-3 => i=1..n-2
+        i = k + 1
+        A = (D * delta_t / (delta_r ** 2)) * (r_face[i - 1] ** 2 / (r[i] ** 2))  # (i-1/2)
+        B = (D * delta_t / (delta_r ** 2)) * (r_face[i] ** 2 / (r[i] ** 2))      # (i+1/2)
 
-    # Última fila: condición Robin equivalente a flujo nulo en c
-    # -U[n-2] + (1 - dr/r_max) U[n-1] = 0
-    diag[-1] = 1.0 - (delta_r / r_max)
-    lower[-1] = -1.0
+        diag[k] = 1.0 + A + B
+        if k > 0:
+            lower[k - 1] = -A
+        upper[k] = -B
 
-    if abs(diag[-1]) < 1e-14:
-        raise ValueError("La condición en r_max da una ecuación casi singular; reduce Δr o aumenta r_max.")
+    # Última ecuación (i = n-1) con flujo nulo en cara externa:
+    # flujo en (n-1/2) existe; flujo en (n+1/2) = 0  => solo contribuye la cara interna
+    i = n - 1
+    A_last = (D * delta_t / (delta_r ** 2)) * (r_face[-1] ** 2 / (r[i] ** 2))  # cara (n-3/2) en notación de r_face[-1]=r_{n-3/2}
+    # OJO: r_face[-1] es la cara entre n-2 y n-1, que es la "cara interna" del último control.
+    diag[-1] = 1.0 + A_last
+    lower[-1] = -A_last  # conecta con C[n-2] (que es incógnita k=Nunk-2)
 
     times = np.empty(m)
     j = np.empty(m)
     profiles = np.empty((m, n))
 
-    for k in range(m):
+    for step in range(m):
         rhs = np.empty(Nunk, dtype=float)
 
-        rhs[:-1] = U[1:-1].copy()
-        rhs[0] += lam * u0       # incorpora U[0]=u0 conocida
-        rhs[-1] = 0.0            # ecuación de contorno
+        # RHS para i=1..n-2
+        rhs[:-1] = C[1:-1].copy()
 
-        U_unk = _thomas_tridiagonal(lower, diag, upper, rhs)
-        U[0] = u0
-        U[1:] = U_unk
+        # Incorporar Dirichlet en i=1: término A*C0 pasa al RHS
+        # Aquí A corresponde a i=1 => cara i-1/2 = r_face[0]
+        A_i1 = (D * delta_t / (delta_r ** 2)) * (r_face[0] ** 2 / (r[1] ** 2))
+        rhs[0] += A_i1 * c0
 
-        C = U / r
+        # RHS última ecuación (i=n-1)
+        rhs[-1] = C[-1]
 
-        # Flujo molar en r=a: N = -D (dc/dr)|_a
+        # Resolver tridiagonal para C[1..n-1]
+        C_unk = _thomas_tridiagonal(lower, diag, upper, rhs)
+        C[0] = c0
+        C[1:] = C_unk
+
+        # Flujo molar en r=a (hacia el electrodo): N = -D (dc/dr)|_a
         dc_dr_a = (-3.0 * C[0] + 4.0 * C[1] - C[2]) / (2.0 * delta_r)
         N_mol = -D * dc_dr_a
 
-        times[k] = (k + 1) * delta_t
-        j[k] = F * N_mol  # n=1 fijo
-        profiles[k] = C
+        times[step] = (step + 1) * delta_t
+        j[step] = F * N_mol  # n=1 fijo
+        profiles[step] = C
 
     return times, j, r, profiles
+
