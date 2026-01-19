@@ -1,6 +1,6 @@
 import numpy as np
 
-def solve_diffusion_CN(
+def solve_diffusion_implicit_1d(
     delta_x=2e-4,
     delta_t=0.02,
     max_t=6.0
