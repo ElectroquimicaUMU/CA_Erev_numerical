@@ -352,12 +352,19 @@ with col_right:
     ax.set_title("Perfiles de concentración")
     ax.grid(True)
     ax.legend(fontsize=8)
+
+    # Eje y fijo: 0 .. concentración inicial (tomamos el máximo c_bulk de las curvas seleccionadas)
+    y_max = max(float(rr["params"]["c_bulk"]) for rr in selected)
+    if y_max <= 0:
+        y_max = 1.0
+    ax.set_ylim(0.0, y_max)
     st.pyplot(fig, use_container_width=True)
 
 st.caption(
     "Notas: (i) Transferencia monoelectrónica (n=1) reversible. "
     "(ii) Coeficientes de difusión iguales para especies oxidada y reducida."
 )
+
 
 
 
