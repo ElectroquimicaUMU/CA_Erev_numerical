@@ -5,7 +5,7 @@ import time
 from main import solve_diffusion_implicit_1d
 
 st.set_page_config(page_title="Cronoamperometría Numérica (1D)", layout="wide")
-st.title("Cronoamperometría en coordenadas cartesianas (modelo numérico)")
+st.title("Cronoamperometría")
 
 # --- Parámetros del sistema ---
 st.sidebar.header("Parámetros de simulación")
