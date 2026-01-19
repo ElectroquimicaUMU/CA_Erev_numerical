@@ -174,7 +174,7 @@ sim_enabled = E_valid and max_t_valid
 
 st.sidebar.header("Gestión de curvas")
 def_label = f"{geometry.split()[0]} | D={_fmt_sci(D)} | E={E if E_valid else '??'} V | tmax={max_t if max_t_valid else '??'} s"
-if geometry.startswith("Macroelectrodo"):
+if geometry.startswith("Plano"):
     def_label += f" | max_x={_fmt_sci(max_x)}"
 else:
     def_label += f" | a={_fmt_sci(a)} | r_max={_fmt_sci(r_max)}"
@@ -358,6 +358,7 @@ st.caption(
     "Notas: (i) Transferencia monoelectrónica (n=1) reversible. "
     "(ii) Coeficientes de difusión iguales para especies oxidada y reducida."
 )
+
 
 
 
