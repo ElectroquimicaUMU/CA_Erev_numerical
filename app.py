@@ -152,8 +152,9 @@ if geometry.startswith("Planar"):
         format="%.2e",
         help="Por defecto: 6*sqrt(D*tmax). En el borde se impone dc/dx=0."
     )
-    delta_x = None
-    max_x = None
+    a = None
+    delta_r = None
+    r_max = None
 
 else:
     a = st.sidebar.number_input("Radio del electrodo a [m]", value=25e-6, min_value=1e-9, format="%.2e")
@@ -166,9 +167,8 @@ else:
         format="%.2e",
         help="Por defecto: a + 6*sqrt(D*tmax). En el borde se impone dc/dr=0."
     )
-    a = None
-    delta_r = None
-    r_max = None
+    delta_x = None
+    max_x = None
 
 # habilitar simulación sólo si E y tmax son válidos
 sim_enabled = E_valid and max_t_valid
@@ -359,5 +359,6 @@ st.caption(
     "Notas: (i) Transferencia monoelectrónica (n=1) reversible. "
     "(ii) Coeficientes de difusión iguales para especies oxidada y reducida."
 )
+
 
 
