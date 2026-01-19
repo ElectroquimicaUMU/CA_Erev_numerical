@@ -27,7 +27,7 @@ def _parse_float(text: str) -> float:
 
 def _build_txt_j(selected_runs: list[dict]) -> str:
     lines = []
-    lines.append("# Export: |j(t)| por corrida (A/m^2)")
+    lines.append("# Export: |j(t)| (A/m^2)")
     lines.append("# Columnas: t[s]\t|j|[A/m^2]")
     for r in selected_runs:
         p = r["params"]
@@ -333,5 +333,6 @@ st.caption(
     "Notas: (i) La condición en la superficie es tipo Nernst. "
     "(ii) Se asumen coeficientes de difusión iguales para las especies oxidada y reducida."
 )
+
 
 
