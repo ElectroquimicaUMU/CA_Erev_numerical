@@ -155,7 +155,6 @@ if geometry.startswith("Planar"):
     a = None
     delta_r = None
     r_max = None
-
 else:
     a = st.sidebar.number_input("Radio del electrodo a [m]", value=25e-6, min_value=1e-9, format="%.2e")
     delta_r = st.sidebar.number_input("Δr [m]", value=2e-6, min_value=1e-9, format="%.2e")
@@ -359,6 +358,7 @@ st.caption(
     "Notas: (i) Transferencia monoelectrónica (n=1) reversible. "
     "(ii) Coeficientes de difusión iguales para especies oxidada y reducida."
 )
+
 
 
 
