@@ -1,39 +1,53 @@
 import numpy as np
 
-F = 96485
-R = 8.314
-T = 298
+def solve_diffusion_CN(
+    delta_x=2e-4,
+    delta_t=0.02,
+    max_t=6.0
+):
+    max_x = 6.0 * np.sqrt(max_t)
+    n = int(max_x / delta_x)
+    m = int(max_t / delta_t)
 
-def eta(E, E0):
-    return (F / (R * T)) * (E - E0)
+    g_mod = np.zeros(n)
+    delta = np.ones(n)
+    delta[0] = 0.0
 
-def c_ox_surface(c_ox_star, eta_val):
-    return c_ox_star * np.exp(eta_val) / (1 + np.exp(eta_val))
+    d_mod = np.zeros(n)
+    C = np.ones(n)
 
-def solve_diffusion_numeric(c_ox_star, D, r0, max_r, E, E0, t_max, dt, dr):
-    eta_val = eta(E, E0)
-    c_surf = c_ox_surface(c_ox_star, eta_val)
+    lam = delta_t / (delta_x ** 2)
+    alpha = -lam
+    beta = 2.0 * lam + 1.0
+    gamma = -lam
 
-    r = np.arange(r0, max_r + dr, dr)
-    t = np.arange(0, t_max + dt, dt)
-    N = len(r)
-    M = len(t)
+    g_mod[0] = 0.0
+    for i in range(1, n - 1):
+        g_mod[i] = gamma / (beta - g_mod[i - 1] * alpha)
 
-    c = np.zeros((M, N))
-    c[0, :] = c_ox_star
+    times = []
+    fluxes = []
+    profiles = []
 
-    for n in range(0, M - 1):
-        for i in range(1, N - 1):
-            term1 = D * dt / dr**2
-            term2 = D * dt / (2 * dr * r[i])
-            c[n+1, i] = c[n, i] + term1 * (c[n, i+1] - 2 * c[n, i] + c[n, i-1]) \
-                        + term2 * (c[n, i+1] - c[n, i-1])
-        # Condiciones de frontera
-        c[n+1, 0] = c_surf
-        c[n+1, -1] = c[n+1, -2]  # Neumann: sin flujo
+    for k in range(m):
+        d_mod[0] = 0.0
+        for i in range(1, n - 1):
+            d_mod[i] = (delta[i] - d_mod[i - 1] * alpha) / (
+                beta - g_mod[i - 1] * alpha
+            )
 
-    return t, r, c
+        C[n - 1] = 1.0
+        for i in range(n - 2, -1, -1):
+            C[i] = d_mod[i] - g_mod[i] * C[i + 1]
+            delta[i] = C[i]
 
-def current_density_numeric(c, r, D, t):
-    dc_dr = (c[:, 1] - c[:, 0]) / (r[1] - r[0])
-    return -D * dc_dr
+        time = (k + 1) * delta_t
+        flux = -(-C[2] + 4*C[1] - 3*C[0]) / (2 * delta_x)
+
+        times.append(time)
+        fluxes.append(flux)
+        profiles.append(C.copy())
+
+    x = np.arange(n) * delta_x
+
+    return np.array(times), np.array(fluxes), x, np.array(profiles)
