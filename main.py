@@ -1,14 +1,13 @@
 import numpy as np
+from numba import njit
 
-def solve_diffusion_implicit_1d(
-    delta_x=2e-4,
-    delta_t=0.02,
-    max_t=6.0
-):
+@njit
+def solve_diffusion_implicit_1d(delta_x=2e-4, delta_t=0.02, max_t=6.0):
     max_x = 6.0 * np.sqrt(max_t)
     n = int(max_x / delta_x)
     m = int(max_t / delta_t)
 
+    # Inicialización
     g_mod = np.zeros(n)
     delta = np.ones(n)
     delta[0] = 0.0
@@ -25,9 +24,9 @@ def solve_diffusion_implicit_1d(
     for i in range(1, n - 1):
         g_mod[i] = gamma / (beta - g_mod[i - 1] * alpha)
 
-    times = []
-    fluxes = []
-    profiles = []
+    times = np.empty(m)
+    fluxes = np.empty(m)
+    profiles = np.empty((m, n))
 
     for k in range(m):
         d_mod[0] = 0.0
@@ -44,10 +43,10 @@ def solve_diffusion_implicit_1d(
         time = (k + 1) * delta_t
         flux = -(-C[2] + 4*C[1] - 3*C[0]) / (2 * delta_x)
 
-        times.append(time)
-        fluxes.append(flux)
-        profiles.append(C.copy())
+        times[k] = time
+        fluxes[k] = flux
+        profiles[k, :] = C
 
     x = np.arange(n) * delta_x
 
-    return np.array(times), np.array(fluxes), x, np.array(profiles)
+    return times, fluxes, x, profiles
