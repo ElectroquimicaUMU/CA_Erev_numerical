@@ -105,16 +105,16 @@ geometry = st.sidebar.selectbox(
     ["Planar (semi-infinita)", "Esférica (electrodo de radio a)"],
 )
 
-st.sidebar.header("Parámetros fisicoquímicos")
+st.sidebar.header("Parámetros de sistema")
 D = st.sidebar.number_input("D [m²/s]", value=1e-9, format="%.2e")
 c_bulk = st.sidebar.number_input("c_total (constante) [mol/m³]", value=1.0, min_value=0.0)
 E0 = st.sidebar.number_input("E⁰' [V]", value=0.0)
 
-# E como texto
+st.sidebar.header("Parámetros de la técnica")
 E_text = st.sidebar.text_input("Potencial aplicado E [V] (texto)", value="0.1")
-
-st.sidebar.header("Discretización y dominio (definidos por el usuario)")
 max_t = st.sidebar.slider("Duración [s]", 0.5, 30.0, 6.0, step=0.5)
+
+st.sidebar.header("Parámetros de la simulación")
 delta_t = st.sidebar.number_input("Δt [s]", value=0.01, min_value=1e-6, format="%.3g")
 
 # Validación de E
@@ -130,7 +130,7 @@ if geometry.startswith("Planar"):
     delta_x = st.sidebar.number_input("Δx [m]", value=2e-6, min_value=1e-9, format="%.2e")
     max_x_default = float(_default_L(D, max_t))
     max_x = st.sidebar.number_input(
-        "max_x [m] (dominio)",
+        "max_x [m] (límite exterior)",
         value=max_x_default,
         min_value=float(5 * delta_x),
         format="%.2e",
@@ -154,11 +154,11 @@ else:
     max_x = None
 
 st.sidebar.header("Gestión de curvas")
-def_label = f"{geometry.split()[0]} | D={_fmt_sci(D)} | E={E if sim_enabled else '??'} V | Δt={delta_t:g} s"
+def_label = f"{geometry.split()[0]} | D={_fmt_sci(D)} | E={E if sim_enabled else '??'} V"
 if geometry.startswith("Planar"):
-    def_label += f" | Δx={_fmt_sci(delta_x)} | max_x={_fmt_sci(max_x)}"
+    def_label += f" | max_x={_fmt_sci(max_x)}"
 else:
-    def_label += f" | a={_fmt_sci(a)} | Δr={_fmt_sci(delta_r)} | r_max={_fmt_sci(r_max)}"
+    def_label += f" | a={_fmt_sci(a)} | r_max={_fmt_sci(r_max)}"
 
 label = st.sidebar.text_input("Etiqueta (para la leyenda)", value=def_label)
 
@@ -171,7 +171,7 @@ if clear_all:
     st.session_state.run_id = 1
 
 if run_and_add and sim_enabled:
-    with st.spinner("Resolviendo difusión (implícito)..."):
+    with st.spinner("Resolviendo..."):
         if geometry.startswith("Planar"):
             times, j, coord, profiles = solve_diffusion_implicit_planar(
                 D=D,
@@ -225,7 +225,7 @@ if run_and_add and sim_enabled:
     st.session_state.run_id += 1
 
 if len(st.session_state.runs) == 0:
-    st.info("Simula y añade una curva para empezar a comparar.")
+    st.info("Simula y añade una curva para comparar.")
     st.stop()
 
 st.subheader("Curvas almacenadas")
@@ -333,4 +333,5 @@ st.caption(
     "Notas: (i) La condición en la superficie es tipo Nernst. "
     "(ii) Se asumen coeficientes de difusión iguales para las especies oxidada y reducida."
 )
+
 
