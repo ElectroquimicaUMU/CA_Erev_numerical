@@ -142,7 +142,7 @@ delta_t = st.sidebar.number_input("Δt [s]", value=0.01, min_value=1e-6, format=
 # Para defaults de dominio si tmax es inválido
 t_for_default = float(max_t) if max_t_valid else 6.0
 
-if geometry.startswith("Planar"):
+if geometry.startswith("Plano"):
     delta_x = st.sidebar.number_input("Δx [m]", value=2e-6, min_value=1e-9, format="%.2e")
     max_x_default = float(_default_L(D, t_for_default))
     max_x = st.sidebar.number_input(
@@ -358,6 +358,7 @@ st.caption(
     "Notas: (i) Transferencia monoelectrónica (n=1) reversible. "
     "(ii) Coeficientes de difusión iguales para especies oxidada y reducida."
 )
+
 
 
 
