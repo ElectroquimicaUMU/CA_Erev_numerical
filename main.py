@@ -52,15 +52,11 @@ def solve_diffusion_implicit_planar(
     E: float,
     E0: float,
 ):
-    """Difusión lineal (semi-infinita aproximada) hacia un electrodo plano.
+    """Difusión lineal hacia un electrodo plano con:
+       - c(0,t) fijada por Nernst (Dirichlet)
+       - flujo nulo en x=max_x: dc/dx = 0 (Neumann)
 
-    PDE:  ∂c/∂t = D ∂²c/∂x²,  x>=0
-
-    BCs (Dirichlet):
-      c(0,t) = c_surf(E) (Nernst)
-      c(max_x,t) = c_bulk
-
-    Devuelve: times, j (A/m²), x, profiles
+    PDE:  ∂c/∂t = D ∂²c/∂x², x∈[0,max_x]
     """
     if D <= 0:
         raise ValueError("D debe ser > 0")
@@ -71,37 +67,56 @@ def solve_diffusion_implicit_planar(
     if max_x <= 0:
         raise ValueError("max_x debe ser > 0")
     if max_x < 5 * delta_x:
-        raise ValueError("max_x debe ser al menos ~5*Δx")
+        raise ValueError("max_x debe ser al menos ~5*Δx (mejor bastante mayor)")
 
     n = int(np.ceil(max_x / delta_x)) + 1
     m = int(np.ceil(max_t / delta_t))
 
     lam = D * delta_t / (delta_x ** 2)
 
-    n_int = n - 2
-    diag = np.full(n_int, 1.0 + 2.0 * lam)
-    lower = np.full(n_int - 1, -lam)
-    upper = np.full(n_int - 1, -lam)
-
     c0 = c_surf_nernst(c_bulk, E, E0)
 
+    # Estado inicial
     C = np.full(n, c_bulk)
     C[0] = c0
+
+    # Desconocidas: C[1]..C[n-1] (tamaño n-1)
+    Nunk = n - 1
+    diag = np.empty(Nunk, dtype=float)
+    lower = np.empty(Nunk - 1, dtype=float)
+    upper = np.empty(Nunk - 1, dtype=float)
+
+    # Filas interiores (corresponden a i=1..n-2)
+    diag[:-1] = 1.0 + 2.0 * lam
+    lower[:-1] = -lam
+    upper[:] = -lam
+
+    # Última fila: condición Neumann (flujo nulo) => C[n-1] - C[n-2] = 0
+    diag[-1] = 1.0
+    lower[-1] = -1.0  # coeficiente de C[n-2] en la última ecuación
+    # upper no se usa en la última fila (no existe superdiagonal)
 
     times = np.empty(m)
     j = np.empty(m)
     profiles = np.empty((m, n))
 
     for k in range(m):
-        rhs = C[1:-1].copy()
+        rhs = np.empty(Nunk, dtype=float)
+
+        # Ecuaciones interiores: -lam*C[i-1] + (1+2lam)C[i] - lam*C[i+1] = C_old[i]
+        rhs[:-1] = C[1:-1].copy()
+
+        # Incorporar C[0]=c0 conocida en la primera ecuación interior (i=1)
         rhs[0] += lam * c0
-        rhs[-1] += lam * c_bulk
 
-        C_int = _thomas_tridiagonal(lower, diag, upper, rhs)
+        # Última ecuación: C[n-1] - C[n-2] = 0
+        rhs[-1] = 0.0
+
+        C_unk = _thomas_tridiagonal(lower, diag, upper, rhs)
         C[0] = c0
-        C[1:-1] = C_int
-        C[-1] = c_bulk
+        C[1:] = C_unk
 
+        # Flujo molar hacia el electrodo: N = -D (dc/dx)|_{x=0}
         dc_dx_0 = (-3.0 * C[0] + 4.0 * C[1] - C[2]) / (2.0 * delta_x)
         N_mol = -D * dc_dx_0
 
@@ -125,16 +140,17 @@ def solve_diffusion_implicit_spherical(
     E: float,
     E0: float,
 ):
-    """Difusión esférica (electrodo esférico de radio a).
+    """Difusión esférica (electrodo de radio a) con:
+       - c(a,t) fijada por Nernst (Dirichlet)
+       - flujo nulo en r=r_max: dc/dr = 0 (Neumann)
 
-    PDE: ∂c/∂t = D( ∂²c/∂r² + (2/r)∂c/∂r ), r>=a
-    Con u=r c => ∂u/∂t = D ∂²u/∂r²
+    PDE: ∂c/∂t = D( ∂²c/∂r² + (2/r)∂c/∂r ), r∈[a,r_max]
+    Transformación u=r c => ∂u/∂t = D ∂²u/∂r²
 
-    BCs:
-      c(a,t)=c_surf(E)  => u(a,t)=a*c_surf
-      c(r_max,t)=c_bulk => u(r_max,t)=r_max*c_bulk
-
-    Devuelve: times, j (A/m²), r, profiles
+    Neumann en c: dc/dr=0 en r_max  =>  d(u/r)/dr=0  =>  u'(r_max)=u(r_max)/r_max
+    Discretización (1º orden hacia atrás):
+      (U_N - U_{N-1})/dr = U_N / r_max
+      => -U_{N-1} + (1 - dr/r_max) U_N = 0
     """
     if D <= 0:
         raise ValueError("D debe ser > 0")
@@ -147,7 +163,7 @@ def solve_diffusion_implicit_spherical(
     if r_max <= a:
         raise ValueError("r_max debe ser > a")
     if r_max < a + 5 * delta_r:
-        raise ValueError("r_max debe ser al menos ~a+5*Δr")
+        raise ValueError("r_max debe ser al menos ~a+5*Δr (mejor bastante mayor)")
 
     n = int(np.ceil((r_max - a) / delta_r)) + 1
     m = int(np.ceil(max_t / delta_t))
@@ -155,35 +171,50 @@ def solve_diffusion_implicit_spherical(
 
     lam = D * delta_t / (delta_r ** 2)
 
-    n_int = n - 2
-    diag = np.full(n_int, 1.0 + 2.0 * lam)
-    lower = np.full(n_int - 1, -lam)
-    upper = np.full(n_int - 1, -lam)
-
     c0 = c_surf_nernst(c_bulk, E, E0)
     u0 = a * c0
-    uR = r[-1] * c_bulk
 
+    # Estado inicial: c=c_bulk uniforme => u=r*c_bulk
     U = r * c_bulk
     U[0] = u0
-    U[-1] = uR
+
+    # Desconocidas: U[1]..U[n-1] (tamaño n-1)
+    Nunk = n - 1
+    diag = np.empty(Nunk, dtype=float)
+    lower = np.empty(Nunk - 1, dtype=float)
+    upper = np.empty(Nunk - 1, dtype=float)
+
+    # Filas interiores (i=1..n-2)
+    diag[:-1] = 1.0 + 2.0 * lam
+    lower[:-1] = -lam
+    upper[:] = -lam
+
+    # Última fila: condición Robin equivalente a flujo nulo en c
+    # -U[n-2] + (1 - dr/r_max) U[n-1] = 0
+    diag[-1] = 1.0 - (delta_r / r_max)
+    lower[-1] = -1.0
+
+    if abs(diag[-1]) < 1e-14:
+        raise ValueError("La condición en r_max da una ecuación casi singular; reduce Δr o aumenta r_max.")
 
     times = np.empty(m)
     j = np.empty(m)
     profiles = np.empty((m, n))
 
     for k in range(m):
-        rhs = U[1:-1].copy()
-        rhs[0] += lam * u0
-        rhs[-1] += lam * uR
+        rhs = np.empty(Nunk, dtype=float)
 
-        U_int = _thomas_tridiagonal(lower, diag, upper, rhs)
+        rhs[:-1] = U[1:-1].copy()
+        rhs[0] += lam * u0       # incorpora U[0]=u0 conocida
+        rhs[-1] = 0.0            # ecuación de contorno
+
+        U_unk = _thomas_tridiagonal(lower, diag, upper, rhs)
         U[0] = u0
-        U[1:-1] = U_int
-        U[-1] = uR
+        U[1:] = U_unk
 
         C = U / r
 
+        # Flujo molar en r=a: N = -D (dc/dr)|_a
         dc_dr_a = (-3.0 * C[0] + 4.0 * C[1] - C[2]) / (2.0 * delta_r)
         N_mol = -D * dc_dr_a
 
