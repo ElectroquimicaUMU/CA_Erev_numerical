@@ -27,7 +27,7 @@ def _default_L(D: float, tmax: float) -> float:
 
 def _build_txt_j(selected_runs: list[dict]) -> str:
     lines = []
-    lines.append("# Export: |j(t)| por corrida (A/m^2)")
+    lines.append("# Export: |j(t)| (A/m^2)")
     lines.append("# Columnas: t[s]\t|j|[A/m^2]")
     for r in selected_runs:
         p = r["params"]
@@ -91,8 +91,8 @@ def _build_txt_profile(selected_runs: list[dict], t_profile: float, species: str
 # -----------------------------
 # App
 # -----------------------------
-st.set_page_config(page_title="Cronoamperometría Numérica", layout="wide")
-st.title("Cronoamperometría: difusión planar semi-infinita y electrodo esférico (sin animaciones)")
+st.set_page_config(page_title="Cronoamperometría", layout="wide")
+st.title("Cronoamperometría")
 
 if "runs" not in st.session_state:
     st.session_state.runs = []
@@ -105,15 +105,15 @@ if "run_id" not in st.session_state:
 st.sidebar.header("Geometría")
 geometry = st.sidebar.selectbox(
     "Selecciona el modelo",
-    ["Planar (semi-infinita)", "Esférica (electrodo de radio a)"],
+    ["Plano (macroelectrodo)", "Esférico"],
 )
 
-st.sidebar.header("Parámetros fisicoquímicos")
+st.sidebar.header("Parámetros sistema")
 D = st.sidebar.number_input("D [m²/s]", value=1e-9, format="%.2e")
 c_bulk = st.sidebar.number_input("c_total (constante) [mol/m³]", value=1.0, min_value=0.0)
 E0 = st.sidebar.number_input("E⁰' [V]", value=0.0)
 
-# E como texto
+st.sidebar.header("Parámetros perturbación")
 E_text = st.sidebar.text_input("Potencial aplicado E [V] (texto)", value="0.1")
 E_valid = True
 try:
@@ -122,11 +122,9 @@ except Exception:
     E_valid = False
     E = np.nan
     st.sidebar.error("E no es un número válido. Ej.: 0.1 o -0.25")
+    
+max_t_text = st.sidebar.text_input("Duración tmax [s] (texto)", value="5.0")
 
-st.sidebar.header("Discretización y dominio (definidos por el usuario)")
-
-# tmax como texto (cambio solicitado)
-max_t_text = st.sidebar.text_input("Duración tmax [s] (texto)", value="6.0")
 max_t_valid = True
 try:
     max_t = _parse_float(max_t_text)
@@ -138,6 +136,7 @@ except Exception:
     max_t = np.nan
     st.sidebar.error("tmax no es un número válido > 0. Ej.: 6 o 12.5")
 
+st.sidebar.header("Parámetros simulación")
 delta_t = st.sidebar.number_input("Δt [s]", value=0.01, min_value=1e-6, format="%.3g")
 
 # Para defaults de dominio si tmax es inválido
@@ -147,7 +146,7 @@ if geometry.startswith("Planar"):
     delta_x = st.sidebar.number_input("Δx [m]", value=2e-6, min_value=1e-9, format="%.2e")
     max_x_default = float(_default_L(D, t_for_default))
     max_x = st.sidebar.number_input(
-        "max_x [m] (dominio, flujo nulo en el borde)",
+        "max_x [m] (límite externo)",
         value=max_x_default,
         min_value=float(5 * delta_x),
         format="%.2e",
@@ -161,7 +160,7 @@ else:
     delta_r = st.sidebar.number_input("Δr [m]", value=2e-6, min_value=1e-9, format="%.2e")
     r_max_default = float(a + _default_L(D, t_for_default))
     r_max = st.sidebar.number_input(
-        "r_max [m] (límite externo, flujo nulo en el borde)",
+        "r_max [m] (límite externo)",
         value=r_max_default,
         min_value=float(a + 5 * delta_r),
         format="%.2e",
@@ -174,17 +173,17 @@ else:
 sim_enabled = E_valid and max_t_valid
 
 st.sidebar.header("Gestión de curvas")
-def_label = f"{geometry.split()[0]} | D={_fmt_sci(D)} | E={E if E_valid else '??'} V | tmax={max_t if max_t_valid else '??'} s | Δt={delta_t:g} s"
-if geometry.startswith("Planar"):
-    def_label += f" | Δx={_fmt_sci(delta_x)} | max_x={_fmt_sci(max_x)}"
+def_label = f"{geometry.split()[0]} | D={_fmt_sci(D)} | E={E if E_valid else '??'} V | tmax={max_t if max_t_valid else '??'} s"
+if geometry.startswith("Macroelectrodo"):
+    def_label += f" | max_x={_fmt_sci(max_x)}"
 else:
-    def_label += f" | a={_fmt_sci(a)} | Δr={_fmt_sci(delta_r)} | r_max={_fmt_sci(r_max)}"
+    def_label += f" | a={_fmt_sci(a)} | r_max={_fmt_sci(r_max)}"
 
 label = st.sidebar.text_input("Etiqueta (para la leyenda)", value=def_label)
 
 col_btn1, col_btn2 = st.sidebar.columns(2)
 run_and_add = col_btn1.button("Simular + añadir", disabled=not sim_enabled)
-clear_all = col_btn2.button("Limpiar todo")
+clear_all = col_btn2.button("Borrar todo")
 
 if clear_all:
     st.session_state.runs = []
@@ -194,8 +193,8 @@ if clear_all:
 # Simulación
 # -----------------------------
 if run_and_add and sim_enabled:
-    with st.spinner("Resolviendo difusión (implícito)..."):
-        if geometry.startswith("Planar"):
+    with st.spinner("Resolviendo..."):
+        if geometry.startswith("Macroelectrodo"):
             times, j, coord, profiles = solve_diffusion_implicit_planar(
                 D=D,
                 delta_x=delta_x,
@@ -251,7 +250,7 @@ if run_and_add and sim_enabled:
 # Visualización
 # -----------------------------
 if len(st.session_state.runs) == 0:
-    st.info("Simula y añade una curva para empezar a comparar.")
+    st.info("Simula y añade una curva para comparar.")
     st.stop()
 
 st.subheader("Curvas almacenadas")
@@ -356,8 +355,7 @@ with col_right:
     st.pyplot(fig, use_container_width=True)
 
 st.caption(
-    "Notas: (i) Condición superficial tipo Nernst. "
-    "(ii) Se asume c_total constante y c_red=c_total−c_ox. "
-    "(iii) En el borde externo se impone flujo nulo (Neumann). "
-    "(iv) Para esfera, la j mostrada es local; corriente total: I(t)=4πa²·j(t)."
+    "Notas: (i) Transferencia monoelectrónica (n=1) reversible. "
+    "(ii) Coeficientes de difusión iguales para especies oxidada y reducida."
 )
+
