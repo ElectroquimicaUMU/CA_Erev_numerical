@@ -9,60 +9,6 @@ import matplotlib.pyplot as plt
 from main import solve_diffusion_implicit_planar, solve_diffusion_implicit_spherical
 
 
-# -----------------------------
-# Tuning rendimiento / multiusuario (SIN cambiar el modelo)
-# -----------------------------
-MAX_RUNS = 20  # límite de curvas almacenadas por sesión (evita UI lenta/memoria alta)
-
-
-@st.cache_data(show_spinner=False, max_entries=256)
-def _simulate_planar_cached(
-    D: float,
-    delta_x: float,
-    delta_t: float,
-    max_t: float,
-    max_x: float,
-    c_bulk: float,
-    E: float,
-    E0: float,
-):
-    return solve_diffusion_implicit_planar(
-        D=D,
-        delta_x=delta_x,
-        delta_t=delta_t,
-        max_t=max_t,
-        max_x=max_x,
-        c_bulk=c_bulk,
-        E=E,
-        E0=E0,
-    )
-
-
-@st.cache_data(show_spinner=False, max_entries=256)
-def _simulate_spherical_cached(
-    D: float,
-    delta_r: float,
-    delta_t: float,
-    max_t: float,
-    a: float,
-    r_max: float,
-    c_bulk: float,
-    E: float,
-    E0: float,
-):
-    return solve_diffusion_implicit_spherical(
-        D=D,
-        delta_r=delta_r,
-        delta_t=delta_t,
-        max_t=max_t,
-        a=a,
-        r_max=r_max,
-        c_bulk=c_bulk,
-        E=E,
-        E0=E0,
-    )
-
-
 def _fmt_sci(x: float) -> str:
     if x == 0:
         return "0"
@@ -176,7 +122,7 @@ except Exception:
     E_valid = False
     E = np.nan
     st.sidebar.error("E no es un número válido. Ej.: 0.1 o -0.25")
-
+    
 max_t_text = st.sidebar.text_input("Duración tmax [s] (texto)", value="5.0")
 
 max_t_valid = True
@@ -249,28 +195,28 @@ if clear_all:
 if run_and_add and sim_enabled:
     with st.spinner("Resolviendo..."):
         if geometry.startswith("Plano"):
-            times, j, coord, profiles = _simulate_planar_cached(
-                D=float(D),
-                delta_x=float(delta_x),
-                delta_t=float(delta_t),
-                max_t=float(max_t),
-                max_x=float(max_x),
-                c_bulk=float(c_bulk),
-                E=float(E),
-                E0=float(E0),
+            times, j, coord, profiles = solve_diffusion_implicit_planar(
+                D=D,
+                delta_x=delta_x,
+                delta_t=delta_t,
+                max_t=max_t,
+                max_x=max_x,
+                c_bulk=c_bulk,
+                E=E,
+                E0=E0,
             )
             coord_um = coord * 1e6
         else:
-            times, j, r, profiles = _simulate_spherical_cached(
-                D=float(D),
-                delta_r=float(delta_r),
-                delta_t=float(delta_t),
-                max_t=float(max_t),
-                a=float(a),
-                r_max=float(r_max),
-                c_bulk=float(c_bulk),
-                E=float(E),
-                E0=float(E0),
+            times, j, r, profiles = solve_diffusion_implicit_spherical(
+                D=D,
+                delta_r=delta_r,
+                delta_t=delta_t,
+                max_t=max_t,
+                a=a,
+                r_max=r_max,
+                c_bulk=c_bulk,
+                E=E,
+                E0=E0,
             )
             coord_um = (r - a) * 1e6  # distancia a la superficie
 
@@ -299,10 +245,6 @@ if run_and_add and sim_enabled:
         }
     )
     st.session_state.run_id += 1
-
-    # Límite de curvas por sesión (solo rendimiento)
-    if len(st.session_state.runs) > MAX_RUNS:
-        st.session_state.runs = st.session_state.runs[-MAX_RUNS:]
 
 # -----------------------------
 # Visualización
@@ -422,3 +364,12 @@ st.caption(
     "Notas: (i) Transferencia monoelectrónica (n=1) reversible. "
     "(ii) Coeficientes de difusión iguales para especies oxidada y reducida."
 )
+
+
+
+
+
+
+
+
+
