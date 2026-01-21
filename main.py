@@ -1,22 +1,48 @@
-import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-import streamlit as st
 import numpy as np
-import matplotlib.pyplot as plt
 
-from main import solve_diffusion_implicit_planar, solve_diffusion_implicit_spherical
-
-
-# -----------------------------
-# Tuning rendimiento / multiusuario (SIN cambiar el modelo)
-# -----------------------------
-MAX_RUNS = 20  # límite de curvas almacenadas por sesión (evita UI lenta/memoria alta)
+# --- Constantes ---
+F = 96485.0  # C/mol
+R = 8.314    # J/mol/K
+T = 298.0    # K
 
 
-@st.cache_data(show_spinner=False, max_entries=256)
-def _simulate_planar_cached(
+def eta(E: float, E0: float) -> float:
+    """Sobretensión adimensional: (F/RT)(E - E0)."""
+    return (F / (R * T)) * (E - E0)
+
+
+def c_surf_nernst(c_bulk: float, E: float, E0: float) -> float:
+    """Concentración superficial bajo condición de Nernst (forma logística)."""
+    x = np.exp(eta(E, E0))
+    return c_bulk * x / (1.0 + x)
+
+
+def _thomas_tridiagonal(lower: np.ndarray, diag: np.ndarray, upper: np.ndarray, rhs: np.ndarray) -> np.ndarray:
+    """Resuelve un sistema tridiagonal Ax=rhs con el algoritmo de Thomas."""
+    n = diag.size
+    c_star = np.empty(n - 1, dtype=float)
+    d_star = np.empty(n, dtype=float)
+
+    c_star[0] = upper[0] / diag[0]
+    d_star[0] = rhs[0] / diag[0]
+
+    for i in range(1, n - 1):
+        denom = diag[i] - lower[i - 1] * c_star[i - 1]
+        c_star[i] = upper[i] / denom
+        d_star[i] = (rhs[i] - lower[i - 1] * d_star[i - 1]) / denom
+
+    denom = diag[-1] - lower[-1] * c_star[-1]
+    d_star[-1] = (rhs[-1] - lower[-1] * d_star[-2]) / denom
+
+    x = np.empty(n, dtype=float)
+    x[-1] = d_star[-1]
+    for i in range(n - 2, -1, -1):
+        x[i] = d_star[i] - c_star[i] * x[i + 1]
+    return x
+
+
+def solve_diffusion_implicit_planar(
+    *,
     D: float,
     delta_x: float,
     delta_t: float,
@@ -26,20 +52,83 @@ def _simulate_planar_cached(
     E: float,
     E0: float,
 ):
-    return solve_diffusion_implicit_planar(
-        D=D,
-        delta_x=delta_x,
-        delta_t=delta_t,
-        max_t=max_t,
-        max_x=max_x,
-        c_bulk=c_bulk,
-        E=E,
-        E0=E0,
-    )
+    """Difusión lineal hacia un electrodo plano con:
+       - c(0,t) fijada por Nernst (Dirichlet)
+       - flujo nulo en x=max_x: dc/dx = 0 (Neumann)
 
+    PDE:  ∂c/∂t = D ∂²c/∂x², x∈[0,max_x]
+    """
+    if D <= 0:
+        raise ValueError("D debe ser > 0")
+    if delta_x <= 0 or delta_t <= 0:
+        raise ValueError("delta_x y delta_t deben ser > 0")
+    if max_t <= 0:
+        raise ValueError("max_t debe ser > 0")
+    if max_x <= 0:
+        raise ValueError("max_x debe ser > 0")
+    if max_x < 5 * delta_x:
+        raise ValueError("max_x debe ser al menos ~5*Δx (mejor bastante mayor)")
 
-@st.cache_data(show_spinner=False, max_entries=256)
-def _simulate_spherical_cached(
+    n = int(np.ceil(max_x / delta_x)) + 1
+    m = int(np.ceil(max_t / delta_t))
+
+    lam = D * delta_t / (delta_x ** 2)
+
+    c0 = c_surf_nernst(c_bulk, E, E0)
+
+    # Estado inicial
+    C = np.full(n, c_bulk)
+    C[0] = c0
+
+    # Desconocidas: C[1]..C[n-1] (tamaño n-1)
+    Nunk = n - 1
+    diag = np.empty(Nunk, dtype=float)
+    lower = np.empty(Nunk - 1, dtype=float)
+    upper = np.empty(Nunk - 1, dtype=float)
+
+    # Filas interiores (corresponden a i=1..n-2)
+    diag[:-1] = 1.0 + 2.0 * lam
+    lower[:-1] = -lam
+    upper[:] = -lam
+
+    # Última fila: condición Neumann (flujo nulo) => C[n-1] - C[n-2] = 0
+    diag[-1] = 1.0
+    lower[-1] = -1.0  # coeficiente de C[n-2] en la última ecuación
+    # upper no se usa en la última fila (no existe superdiagonal)
+
+    times = np.empty(m)
+    j = np.empty(m)
+    profiles = np.empty((m, n))
+
+    for k in range(m):
+        rhs = np.empty(Nunk, dtype=float)
+
+        # Ecuaciones interiores: -lam*C[i-1] + (1+2lam)C[i] - lam*C[i+1] = C_old[i]
+        rhs[:-1] = C[1:-1].copy()
+
+        # Incorporar C[0]=c0 conocida en la primera ecuación interior (i=1)
+        rhs[0] += lam * c0
+
+        # Última ecuación: C[n-1] - C[n-2] = 0
+        rhs[-1] = 0.0
+
+        C_unk = _thomas_tridiagonal(lower, diag, upper, rhs)
+        C[0] = c0
+        C[1:] = C_unk
+
+        # Flujo molar hacia el electrodo: N = -D (dc/dx)|_{x=0}
+        dc_dx_0 = (-3.0 * C[0] + 4.0 * C[1] - C[2]) / (2.0 * delta_x)
+        N_mol = -D * dc_dx_0
+
+        times[k] = (k + 1) * delta_t
+        j[k] = F * N_mol  # n=1 fijo
+        profiles[k] = C
+
+    x = np.arange(n) * delta_x
+    return times, j, x, profiles
+
+def solve_diffusion_implicit_spherical(
+    *,
     D: float,
     delta_r: float,
     delta_t: float,
@@ -50,375 +139,98 @@ def _simulate_spherical_cached(
     E: float,
     E0: float,
 ):
-    return solve_diffusion_implicit_spherical(
-        D=D,
-        delta_r=delta_r,
-        delta_t=delta_t,
-        max_t=max_t,
-        a=a,
-        r_max=r_max,
-        c_bulk=c_bulk,
-        E=E,
-        E0=E0,
-    )
+    """Difusión esférica con:
+       - c(a,t) fijada por Nernst (Dirichlet)
+       - flujo nulo en r=r_max: dc/dr = 0 (Neumann)
+    Discretización conservativa:  ∂c/∂t = (D/r^2) ∂/∂r (r^2 ∂c/∂r)
+    Implícito, sistema tridiagonal.
+    """
+    if D <= 0:
+        raise ValueError("D debe ser > 0")
+    if delta_r <= 0 or delta_t <= 0:
+        raise ValueError("delta_r y delta_t deben ser > 0")
+    if max_t <= 0:
+        raise ValueError("max_t debe ser > 0")
+    if a <= 0:
+        raise ValueError("a debe ser > 0")
+    if r_max <= a:
+        raise ValueError("r_max debe ser > a")
+    if r_max < a + 5 * delta_r:
+        raise ValueError("r_max debe ser al menos ~a+5*Δr (mejor bastante mayor)")
+
+    # Mallado radial
+    n = int(np.ceil((r_max - a) / delta_r)) + 1
+    m = int(np.ceil(max_t / delta_t))
+    r = a + np.arange(n) * delta_r
+
+    # Caras (i+1/2)
+    r_face = 0.5 * (r[:-1] + r[1:])  # tamaño n-1
+
+    # Condición en electrodo (Dirichlet en r=a)
+    c0 = c_surf_nernst(c_bulk, E, E0)
+
+    # Estado inicial (puedes mantener c_bulk uniforme)
+    C = np.full(n, c_bulk, dtype=float)
+    C[0] = c0
+
+    # Desconocidas: C[1]..C[n-1] (tamaño n-1)
+    Nunk = n - 1
+    diag = np.zeros(Nunk, dtype=float)
+    lower = np.zeros(Nunk - 1, dtype=float)
+    upper = np.zeros(Nunk - 1, dtype=float)
+
+    # Construcción de coeficientes implícitos (conservativos)
+    # Para nodo físico i (1..n-2): coeficientes basados en r_{i±1/2}^2 / r_i^2
+    # Map: incógnita k corresponde a i=k+1
+    for k in range(Nunk - 1):  # k=0..n-3 => i=1..n-2
+        i = k + 1
+        A = (D * delta_t / (delta_r ** 2)) * (r_face[i - 1] ** 2 / (r[i] ** 2))  # (i-1/2)
+        B = (D * delta_t / (delta_r ** 2)) * (r_face[i] ** 2 / (r[i] ** 2))      # (i+1/2)
+
+        diag[k] = 1.0 + A + B
+        if k > 0:
+            lower[k - 1] = -A
+        upper[k] = -B
+
+    # Última ecuación (i = n-1) con flujo nulo en cara externa:
+    # flujo en (n-1/2) existe; flujo en (n+1/2) = 0  => solo contribuye la cara interna
+    i = n - 1
+    A_last = (D * delta_t / (delta_r ** 2)) * (r_face[-1] ** 2 / (r[i] ** 2))  # cara (n-3/2) en notación de r_face[-1]=r_{n-3/2}
+    # OJO: r_face[-1] es la cara entre n-2 y n-1, que es la "cara interna" del último control.
+    diag[-1] = 1.0 + A_last
+    lower[-1] = -A_last  # conecta con C[n-2] (que es incógnita k=Nunk-2)
+
+    times = np.empty(m)
+    j = np.empty(m)
+    profiles = np.empty((m, n))
+
+    for step in range(m):
+        rhs = np.empty(Nunk, dtype=float)
+
+        # RHS para i=1..n-2
+        rhs[:-1] = C[1:-1].copy()
+
+        # Incorporar Dirichlet en i=1: término A*C0 pasa al RHS
+        # Aquí A corresponde a i=1 => cara i-1/2 = r_face[0]
+        A_i1 = (D * delta_t / (delta_r ** 2)) * (r_face[0] ** 2 / (r[1] ** 2))
+        rhs[0] += A_i1 * c0
+
+        # RHS última ecuación (i=n-1)
+        rhs[-1] = C[-1]
+
+        # Resolver tridiagonal para C[1..n-1]
+        C_unk = _thomas_tridiagonal(lower, diag, upper, rhs)
+        C[0] = c0
+        C[1:] = C_unk
+
+        # Flujo molar en r=a (hacia el electrodo): N = -D (dc/dr)|_a
+        dc_dr_a = (-3.0 * C[0] + 4.0 * C[1] - C[2]) / (2.0 * delta_r)
+        N_mol = -D * dc_dr_a
+
+        times[step] = (step + 1) * delta_t
+        j[step] = F * N_mol  # n=1 fijo
+        profiles[step] = C
+
+    return times, j, r, profiles
 
 
-def _fmt_sci(x: float) -> str:
-    if x == 0:
-        return "0"
-    exp = int(np.floor(np.log10(abs(x))))
-    mant = x / (10 ** exp)
-    return f"{mant:.3g}e{exp}"
-
-
-def _parse_float(text: str) -> float:
-    return float(text.strip().replace(",", "."))
-
-
-def _default_L(D: float, tmax: float) -> float:
-    return 6.0 * np.sqrt(D * tmax)
-
-
-def _build_txt_j(selected_runs: list[dict]) -> str:
-    lines = []
-    lines.append("# Export: |j(t)| (A/m^2)")
-    lines.append("# Columnas: t[s]\t|j|[A/m^2]")
-    for r in selected_runs:
-        p = r["params"]
-        lines.append("")
-        lines.append(f"# --- RUN {r['id']} ---")
-        lines.append(f"# label: {r['label']}")
-        lines.append(f"# geometry: {r['geometry']}")
-        lines.append("# params: " + ", ".join([f"{k}={p[k]}" for k in p.keys()]))
-
-        t = r["times"]
-        jabs = np.abs(r["j"])
-        for ti, ji in zip(t, jabs):
-            lines.append(f"{ti:.12g}\t{ji:.12g}")
-
-    return "\n".join(lines) + "\n"
-
-
-def _build_txt_profile(selected_runs: list[dict], t_profile: float, species: str) -> str:
-    lines = []
-    lines.append("# Export: perfiles c(distancia,t) al tiempo elegido")
-    lines.append(f"# t_objetivo[s]={t_profile}")
-    if species == "Oxidada (c_ox)":
-        lines.append("# Columnas: dist[um]\tc_ox[mol/m^3]")
-    elif species == "Reducida (c_red)":
-        lines.append("# Columnas: dist[um]\tc_red[mol/m^3]  (c_total=c_bulk constante)")
-    else:
-        lines.append("# Columnas: dist[um]\tc_ox[mol/m^3]\tc_red[mol/m^3]  (c_total=c_bulk)")
-
-    for r in selected_runs:
-        p = r["params"]
-        lines.append("")
-        lines.append(f"# --- RUN {r['id']} ---")
-        lines.append(f"# label: {r['label']}")
-        lines.append(f"# geometry: {r['geometry']}")
-        lines.append("# params: " + ", ".join([f"{k}={p[k]}" for k in p.keys()]))
-
-        times = r["times"]
-        idx = int(np.argmin(np.abs(times - t_profile)))
-        t_used = float(times[idx])
-
-        dist = r["coord_um"]
-        c_ox = r["profiles"][idx]
-        c_tot = float(p["c_bulk"])
-        c_red = c_tot - c_ox
-
-        lines.append(f"# t_usado[s]={t_used:.12g}")
-
-        if species == "Oxidada (c_ox)":
-            for x, co in zip(dist, c_ox):
-                lines.append(f"{x:.12g}\t{co:.12g}")
-        elif species == "Reducida (c_red)":
-            for x, cr in zip(dist, c_red):
-                lines.append(f"{x:.12g}\t{cr:.12g}")
-        else:
-            for x, co, cr in zip(dist, c_ox, c_red):
-                lines.append(f"{x:.12g}\t{co:.12g}\t{cr:.12g}")
-
-    return "\n".join(lines) + "\n"
-
-
-# -----------------------------
-# App
-# -----------------------------
-st.set_page_config(page_title="Cronoamperometría", layout="wide")
-st.title("Cronoamperometría")
-
-if "runs" not in st.session_state:
-    st.session_state.runs = []
-if "run_id" not in st.session_state:
-    st.session_state.run_id = 1
-
-# -----------------------------
-# Sidebar
-# -----------------------------
-st.sidebar.header("Geometría")
-geometry = st.sidebar.selectbox(
-    "Selecciona el modelo",
-    ["Plano (macroelectrodo)", "Esférico"],
-)
-
-st.sidebar.header("Parámetros sistema")
-D = st.sidebar.number_input("D [m²/s]", value=1e-9, format="%.2e")
-c_bulk = st.sidebar.number_input("c_total (constante) [mol/m³]", value=1.0, min_value=0.0)
-E0 = st.sidebar.number_input("E⁰' [V]", value=0.0)
-
-st.sidebar.header("Parámetros perturbación")
-E_text = st.sidebar.text_input("Potencial aplicado E [V] (texto)", value="0.1")
-E_valid = True
-try:
-    E = _parse_float(E_text)
-except Exception:
-    E_valid = False
-    E = np.nan
-    st.sidebar.error("E no es un número válido. Ej.: 0.1 o -0.25")
-
-max_t_text = st.sidebar.text_input("Duración tmax [s] (texto)", value="5.0")
-
-max_t_valid = True
-try:
-    max_t = _parse_float(max_t_text)
-    if not (max_t > 0):
-        max_t_valid = False
-        max_t = np.nan
-except Exception:
-    max_t_valid = False
-    max_t = np.nan
-    st.sidebar.error("tmax no es un número válido > 0. Ej.: 6 o 12.5")
-
-st.sidebar.header("Parámetros simulación")
-delta_t = st.sidebar.number_input("Δt [s]", value=0.01, min_value=1e-6, format="%.3g")
-
-# Para defaults de dominio si tmax es inválido
-t_for_default = float(max_t) if max_t_valid else 6.0
-
-if geometry.startswith("Plano"):
-    delta_x = st.sidebar.number_input("Δx [m]", value=2e-6, min_value=1e-9, format="%.2e")
-    max_x_default = float(_default_L(D, t_for_default))
-    max_x = st.sidebar.number_input(
-        "max_x [m] (límite externo)",
-        value=max_x_default,
-        min_value=float(5 * delta_x),
-        format="%.2e",
-        help="Por defecto: 6*sqrt(D*tmax). En el borde se impone dc/dx=0."
-    )
-    a = None
-    delta_r = None
-    r_max = None
-else:
-    a = st.sidebar.number_input("Radio del electrodo a [m]", value=25e-6, min_value=1e-9, format="%.2e")
-    delta_r = st.sidebar.number_input("Δr [m]", value=2e-6, min_value=1e-9, format="%.2e")
-    r_max_default = float(a + _default_L(D, t_for_default))
-    r_max = st.sidebar.number_input(
-        "r_max [m] (límite externo)",
-        value=r_max_default,
-        min_value=float(a + 5 * delta_r),
-        format="%.2e",
-        help="Por defecto: a + 6*sqrt(D*tmax). En el borde se impone dc/dr=0."
-    )
-    delta_x = None
-    max_x = None
-
-# habilitar simulación sólo si E y tmax son válidos
-sim_enabled = E_valid and max_t_valid
-
-st.sidebar.header("Gestión de curvas")
-def_label = f"{geometry.split()[0]} | D={_fmt_sci(D)} | E={E if E_valid else '??'} V | tmax={max_t if max_t_valid else '??'} s"
-if geometry.startswith("Plano"):
-    def_label += f" | max_x={_fmt_sci(max_x)}"
-else:
-    def_label += f" | a={_fmt_sci(a)} | r_max={_fmt_sci(r_max)}"
-
-label = st.sidebar.text_input("Etiqueta (para la leyenda)", value=def_label)
-
-col_btn1, col_btn2 = st.sidebar.columns(2)
-run_and_add = col_btn1.button("Simular + añadir", disabled=not sim_enabled)
-clear_all = col_btn2.button("Borrar todo")
-
-if clear_all:
-    st.session_state.runs = []
-    st.session_state.run_id = 1
-
-# -----------------------------
-# Simulación
-# -----------------------------
-if run_and_add and sim_enabled:
-    with st.spinner("Resolviendo..."):
-        if geometry.startswith("Plano"):
-            times, j, coord, profiles = _simulate_planar_cached(
-                D=float(D),
-                delta_x=float(delta_x),
-                delta_t=float(delta_t),
-                max_t=float(max_t),
-                max_x=float(max_x),
-                c_bulk=float(c_bulk),
-                E=float(E),
-                E0=float(E0),
-            )
-            coord_um = coord * 1e6
-        else:
-            times, j, r, profiles = _simulate_spherical_cached(
-                D=float(D),
-                delta_r=float(delta_r),
-                delta_t=float(delta_t),
-                max_t=float(max_t),
-                a=float(a),
-                r_max=float(r_max),
-                c_bulk=float(c_bulk),
-                E=float(E),
-                E0=float(E0),
-            )
-            coord_um = (r - a) * 1e6  # distancia a la superficie
-
-    st.session_state.runs.append(
-        {
-            "id": st.session_state.run_id,
-            "label": label,
-            "geometry": geometry,
-            "params": {
-                "D": D,
-                "c_bulk": c_bulk,
-                "E0": E0,
-                "E": E,
-                "max_t": max_t,
-                "delta_t": delta_t,
-                "delta_x": delta_x,
-                "max_x": max_x,
-                "a": a,
-                "delta_r": delta_r,
-                "r_max": r_max,
-            },
-            "times": times,
-            "j": j,
-            "coord_um": coord_um,
-            "profiles": profiles,  # esto es c_ox (oxidada)
-        }
-    )
-    st.session_state.run_id += 1
-
-    # Límite de curvas por sesión (solo rendimiento)
-    if len(st.session_state.runs) > MAX_RUNS:
-        st.session_state.runs = st.session_state.runs[-MAX_RUNS:]
-
-# -----------------------------
-# Visualización
-# -----------------------------
-if len(st.session_state.runs) == 0:
-    st.info("Simula y añade una curva para comparar.")
-    st.stop()
-
-st.subheader("Curvas almacenadas")
-rows = []
-for r in st.session_state.runs:
-    p = r["params"]
-    rows.append(
-        {
-            "ID": r["id"],
-            "Etiqueta": r["label"],
-            "Geometría": r["geometry"],
-            "D [m²/s]": p["D"],
-            "E [V]": p["E"],
-            "tmax [s]": p["max_t"],
-        }
-    )
-st.dataframe(rows, use_container_width=True, hide_index=True)
-
-ids = [r["id"] for r in st.session_state.runs]
-selected_ids = st.multiselect("Selecciona curvas a mostrar", options=ids, default=ids)
-selected = [r for r in st.session_state.runs if r["id"] in selected_ids]
-if len(selected) == 0:
-    st.warning("No hay curvas seleccionadas.")
-    st.stop()
-
-st.markdown("### Visualización")
-
-species = st.radio(
-    "Perfil a representar",
-    ["Oxidada (c_ox)", "Reducida (c_red)", "Ambas (c_ox y c_red)"],
-    horizontal=True,
-)
-
-t_max_sel = float(max(r["times"][-1] for r in selected))
-t_profile = st.slider(
-    "Tiempo para los perfiles [s]",
-    0.0,
-    t_max_sel,
-    min(1.0, t_max_sel),
-    step=max(t_max_sel / 200.0, 1e-6),
-)
-
-# Descargas (.txt)
-txt_j = _build_txt_j(selected)
-txt_prof = _build_txt_profile(selected, t_profile, species)
-
-dl1, dl2 = st.columns(2)
-with dl1:
-    st.download_button(
-        label="Descargar |j(t)| (seleccionadas) .txt",
-        data=txt_j,
-        file_name="j_abs_vs_t.txt",
-        mime="text/plain",
-        use_container_width=True,
-    )
-with dl2:
-    st.download_button(
-        label="Descargar perfiles a t (seleccionadas) .txt",
-        data=txt_prof,
-        file_name="profiles_at_t.txt",
-        mime="text/plain",
-        use_container_width=True,
-    )
-
-# (1) Lado a lado: |j(t)| y perfiles
-col_left, col_right = st.columns(2)
-
-with col_left:
-    fig, ax = plt.subplots()
-    for r in selected:
-        ax.plot(r["times"], np.abs(r["j"]), label=f"{r['id']}: {r['label']}")
-    ax.set_xlabel("t [s]")
-    ax.set_ylabel("|j| [A/m²]")  # (2) valor absoluto
-    ax.set_title("Densidad de corriente (valor absoluto) vs tiempo")
-    ax.grid(True)
-    ax.legend(fontsize=8)
-    st.pyplot(fig, use_container_width=True)
-
-with col_right:
-    fig, ax = plt.subplots()
-    for r in selected:
-        times = r["times"]
-        idx = int(np.argmin(np.abs(times - t_profile)))
-        dist = r["coord_um"]
-        c_ox = r["profiles"][idx]
-        c_tot = float(r["params"]["c_bulk"])
-        c_red = c_tot - c_ox
-
-        if species == "Oxidada (c_ox)":
-            ax.plot(dist, c_ox, label=f"{r['id']}: {r['label']} (t={times[idx]:.3g}s)")
-        elif species == "Reducida (c_red)":
-            ax.plot(dist, c_red, label=f"{r['id']}: {r['label']} (t={times[idx]:.3g}s)")
-        else:
-            ax.plot(dist, c_ox, label=f"{r['id']}: {r['label']} c_ox (t={times[idx]:.3g}s)")
-            ax.plot(dist, c_red, linestyle="--", label=f"{r['id']}: {r['label']} c_red (t={times[idx]:.3g}s)")
-
-    ax.set_xlabel("Distancia a la superficie (µm)")
-    ax.set_ylabel("c [mol/m³]")
-    ax.set_title("Perfiles de concentración")
-    ax.grid(True)
-    ax.legend(fontsize=8)
-
-    # Eje y fijo: 0 .. concentración inicial (tomamos el máximo c_bulk de las curvas seleccionadas)
-    y_max = max(float(rr["params"]["c_bulk"]) for rr in selected)
-    if y_max <= 0:
-        y_max = 1.0
-    ax.set_ylim(0.0, y_max)
-    st.pyplot(fig, use_container_width=True)
-
-st.caption(
-    "Notas: (i) Transferencia monoelectrónica (n=1) reversible. "
-    "(ii) Coeficientes de difusión iguales para especies oxidada y reducida."
-)
