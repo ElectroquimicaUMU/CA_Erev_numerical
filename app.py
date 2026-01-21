@@ -482,9 +482,6 @@ with col_right:
     ax.set_ylim(0.0, y_max)
     st.pyplot(fig, use_container_width=True)
 
-st.caption(
-    "n=1 fijo, reversible. En el borde externo se impone condición de flujo nulo (Neumann)."
-)
 
 
 
