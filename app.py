@@ -247,7 +247,7 @@ except Exception:
 # Para defaults de dominio si tmax es inválido
 t_for_default = float(max_t) if max_t_valid else 6.0
 
-st.sidebar.header("Límite externo")
+st.sidebar.header("Parámetro/s geométrico/s")
 if geometry.startswith("Plano"):
     max_x_default = float(_default_L(D, t_for_default))
     max_x = st.sidebar.number_input(
@@ -485,4 +485,5 @@ with col_right:
 st.caption(
     "n=1 fijo, reversible. En el borde externo se impone condición de flujo nulo (Neumann)."
 )
+
 
