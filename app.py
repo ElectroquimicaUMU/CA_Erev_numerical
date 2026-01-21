@@ -223,7 +223,7 @@ c_bulk = st.sidebar.number_input("c_total (constante) [mol/m³]", value=1.0, min
 E0 = st.sidebar.number_input("E⁰' [V]", value=0.0)
 
 st.sidebar.header("Parámetros perturbación")
-E_text = st.sidebar.text_input("Potencial aplicado E [V] (texto)", value="0.1")
+E_text = st.sidebar.text_input("Potencial aplicado E [V]", value="0.1")
 E_valid = True
 try:
     E = _parse_float(E_text)
@@ -232,7 +232,7 @@ except Exception:
     E = np.nan
     st.sidebar.error("E no es un número válido. Ej.: 0.1 o -0.25")
 
-max_t_text = st.sidebar.text_input("Duración tmax [s] (texto)", value="5.0")
+max_t_text = st.sidebar.text_input("Duración tmax [s]", value="5.0")
 max_t_valid = True
 try:
     max_t = _parse_float(max_t_text)
@@ -247,11 +247,11 @@ except Exception:
 # Para defaults de dominio si tmax es inválido
 t_for_default = float(max_t) if max_t_valid else 6.0
 
-# Dominio (sí editable como antes)
+st.sidebar.header("Límite externo")
 if geometry.startswith("Plano"):
     max_x_default = float(_default_L(D, t_for_default))
     max_x = st.sidebar.number_input(
-        "max_x [m] (límite externo)",
+        "max_x [m]",
         value=max_x_default,
         min_value=float(1e-9),
         format="%.2e",
@@ -263,7 +263,7 @@ else:
     a = st.sidebar.number_input("Radio del electrodo a [m]", value=25e-6, min_value=1e-9, format="%.2e")
     r_max_default = float(a + _default_L(D, t_for_default))
     r_max = st.sidebar.number_input(
-        "r_max [m] (límite externo)",
+        "r_max [m]",
         value=r_max_default,
         min_value=float(a + 1e-9),
         format="%.2e",
@@ -287,12 +287,6 @@ else:
     delta_t = np.nan
     delta_x = None
     delta_r = None
-
-st.sidebar.caption(
-    "Malla interna (no editable): "
-    + (f"Δt={delta_t:.3g} s, " if np.isfinite(delta_t) else "")
-    + (f"Δx={delta_x:.3g} m" if delta_x is not None else f"Δr={delta_r:.3g} m" if delta_r is not None else "")
-)
 
 # habilitar simulación sólo si E y tmax son válidos
 sim_enabled = E_valid and max_t_valid
@@ -491,3 +485,4 @@ with col_right:
 st.caption(
     "n=1 fijo, reversible. En el borde externo se impone condición de flujo nulo (Neumann)."
 )
+
