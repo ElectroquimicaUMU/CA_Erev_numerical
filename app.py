@@ -298,7 +298,7 @@ if geometry.startswith("Plano"):
 else:
     def_label += f" | a={_fmt_sci(a)} | r_max={_fmt_sci(r_max)}"
 
-label = st.sidebar.text_input("Etiqueta (para la leyenda)", value=def_label)
+label = st.sidebar.text_input("Etiqueta (para la leyenda)", value=id)
 
 col_btn1, col_btn2 = st.sidebar.columns(2)
 run_and_add = col_btn1.button("Simular + añadir", disabled=not sim_enabled)
@@ -485,5 +485,6 @@ with col_right:
 st.caption(
     "n=1 fijo, reversible. En el borde externo se impone condición de flujo nulo (Neumann)."
 )
+
 
 
